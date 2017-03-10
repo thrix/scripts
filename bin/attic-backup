@@ -1,0 +1,107 @@
+#!/bin/bash
+# Copyright (C) 2017 Miroslav Vadkerti (thrix)
+# 
+# This program is free software: you can redistribute it and/or modify it under
+# the terms of the GNU General Public License as published by the Free Software
+# Foundation, either version 3 of the License, or (at your option) any later
+# version.
+# 
+# This program is distributed in the hope that it will be useful, but WITHOUT
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+# FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
+# details.
+#
+# You should have received a copy of the GNU General Public License along with
+# this program. If not, see http://www.gnu.org/licenses/.
+
+# globals
+OPTS="h"
+NAME=$(hostname)
+
+#
+# helpers
+#
+
+function print_info() {
+    printf ":: %s\n" "$@"
+}
+
+function print_error() {
+    printf "Error: %s\n" "$@"
+}
+
+function exit_error() {
+    print_error "$@"
+    exit 1
+}
+
+function help() {
+cat <<EOF
+    usage: $(basename $0) [-h]
+
+    Thrix's Attic backup script.
+
+    Available commands:
+    full-system  Run full system backup against /media/backup drive
+
+    Options:
+      -h         Print this help.
+EOF
+}
+
+function full_system() {
+    BACKUP='/media/backup'
+    REPOSITORY="$BACKUP/${NAME}-full-system.attic"
+
+    # sanity
+    [ $(id -u) -eq 0 ] || exit_error "This command needs root"
+    ls /media/backup &> /dev/null   # for automounter
+    grep -q '/media/backup' <<< $(mount) || exit_error "/media/backup not mounted"
+
+    # run attic
+    print_info "running attic backup"
+    attic create --stats $REPOSITORY::$(date +%Y-%m-%d_%H:%M:%S) \
+        --exclude /sys \
+        --exclude /mnt \
+        --exclude /dev \
+        --exclude /media \
+        --exclude /lost+found \
+        --exclude /proc \
+        --exclude /run
+
+    # Use the `prune` subcommand to maintain 7 daily, 4 weekly and 6 monthly archives.
+    print_info "running attic prune"
+    attic prune -v $REPOSITORY --keep-hourly=23 --keep-daily=7 --keep-weekly=4 --keep-monthly=6
+}
+
+#
+# Main
+#
+
+while getopts $OPTS OPTION
+do
+  case $OPTION in
+    h)
+        help
+        exit
+        ;;
+  esac
+done
+
+[ -z "$1" ] && help
+
+# sanity
+command -v attic >/dev/null || exit_error "attic backup not found"
+
+# execute function cmd_$PARAM according to given positional parmater $PARAM
+for CMD in $@; do
+    # execute test function if exists
+    if [ "$(type -t $CMD)" = "function" ]; then
+        eval $CMD
+    else
+        printf "Error: unknown command $CMD\n"
+        help
+    fi
+done
+
+# vim: ts=4 sw=4 sts=4 ft=sh et ai:
