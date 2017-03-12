@@ -17,11 +17,11 @@
 # globals
 OPTS="h"
 NAME=$(hostname)
+ENCTYPE="keyfile"
 
 #
 # helpers
 #
-
 function print_info() {
     printf ":: %s\n" "$@"
 }
@@ -42,14 +42,15 @@ cat <<EOF
     Thrix's Attic backup script.
 
     Available commands:
-    full-system  Run full system backup against /media/backup drive
+    system     Run full system backup against /media/backup drive
+    user       Run backup of whole user's home directory
 
     Options:
-      -h         Print this help.
+      -h       Print this help.
 EOF
 }
 
-function full_system() {
+function system() {
     BACKUP='/media/backup'
     REPOSITORY="$BACKUP/${NAME}-full-system.attic"
 
@@ -58,19 +59,60 @@ function full_system() {
     ls /media/backup &> /dev/null   # for automounter
     grep -q '/media/backup' <<< $(mount) || exit_error "/media/backup not mounted"
 
+    # init repository
+    if [ ! -e "$REPOSITORY" ]; then
+        print_info "initializing attic repostitory"
+        attic init -e $ENCTYPE $REPOSITORY
+    fi
+
     # run attic
     print_info "running attic backup"
-    attic create --stats $REPOSITORY::$(date +%Y-%m-%d_%H:%M:%S) \
+    attic create --stats -v $REPOSITORY::$(date +%Y-%m-%d_%H:%M:%S) / \
         --exclude /sys \
         --exclude /mnt \
         --exclude /dev \
         --exclude /media \
         --exclude /lost+found \
         --exclude /proc \
-        --exclude /run
+        --exclude /run \
+        --exclude /var/run \
+        --exclude /var/cache \
+        --exclude /var/log \
+        --exclude /var/tmp \
+        --exclude /tmp \
+        --exclude /home/*/temp \
+        --exclude /root/temp \
+        --exclude /var/lib/libvirt/images \
+        --do-not-cross-mountpoints || exit_error 'failed to run attic, please investigate'
 
     # Use the `prune` subcommand to maintain 7 daily, 4 weekly and 6 monthly archives.
     print_info "running attic prune"
+    attic prune -v $REPOSITORY --keep-hourly=23 --keep-daily=7 --keep-weekly=4 --keep-monthly=6
+}
+
+function user() {
+    BACKUP='/media/backup'
+    REPOSITORY="$BACKUP/${NAME}-${USER}.attic"
+
+    # init repository
+    if [ ! -e "$REPOSITORY" ]; then
+        print_info "initializing attic repostitory"
+        attic init -e $ENCTYPE $REPOSITORY
+    fi
+
+    # sanity
+    ls /media/backup &> /dev/null   # for automounter
+    grep -q '/media/backup' <<< $(mount) || exit_error "/media/backup not mounted"
+
+    # run attic
+    print_info "running attic backup"
+    attic create --stats -v $REPOSITORY::$(date +%Y-%m-%d_%H:%M:%S) $HOME \
+        --exclude ~/.cache \
+        --exclude ~/.local/share/Trash \
+        --exclude ~/temp || exit_error 'failed to run attic, please investigate'
+
+    # Use the `prune` subcommand to maintain 7 daily, 4 weekly and 6 monthly archives.
+    print_info "running attic prune, keeping only 7 daily, 4 weekly and 6 monthly archives"
     attic prune -v $REPOSITORY --keep-hourly=23 --keep-daily=7 --keep-weekly=4 --keep-monthly=6
 }
 
